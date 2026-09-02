@@ -1,0 +1,23 @@
+# môi trường ảo - cài lại bằng: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/
+__pycache__/
+*.pyc
+
+# nhật ký chạy nền, chỉ có giá trị tức thời
+logs/
+
+# ván đấu tự sinh khi đo Elo - không cần chia sẻ, tái tạo được bằng play_stockfish.py
+games/
+
+# cache đặc trưng huấn luyện - train.py tự dựng lại từ data/sf.txt.gz
+data/*.feat_kb*/
+*.feat_kb*.npz
+
+# hiệu chỉnh mốc 505, phụ thuộc máy chạy - main.py tự tính lại
+.calib.json
+
+# checkpoint optimizer, không cần để chạy engine (chỉ .npz mới cần)
+*.pt
+
+.DS_Store
+.claude/settings.local.json
