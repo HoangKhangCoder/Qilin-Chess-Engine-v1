@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="web/assets/logo.png" alt="Qilin logo" width="180">
+
 # Qilin — Chess Engine v1
 
 ### A chess engine built from Neural Networks and Python

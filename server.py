@@ -196,6 +196,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    # Chỉ những file này được phục vụ tĩnh - danh sách trắng, không suy ra
+    # đường dẫn từ request để tránh path traversal (../../etc/passwd...).
+    STATIC = {
+        "/assets/logo.png": ("web/assets/logo.png", "image/png"),
+        "/favicon.png": ("web/assets/logo.png", "image/png"),
+    }
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
@@ -204,6 +211,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, f.read(), "text/html; charset=utf-8")
             except OSError:
                 return self._send(404, b"web/index.html khong tim thay", "text/plain")
+        if path in self.STATIC:
+            rel, ctype = self.STATIC[path]
+            try:
+                with open(os.path.join(HERE, rel), "rb") as f:
+                    return self._send(200, f.read(), ctype)
+            except OSError:
+                return self._send(404, b"not found", "text/plain")
         if path == "/api/engines":
             return self._send(200, json.dumps(sorted(ENGINES)))
         self._send(404, json.dumps({"error": "not found"}))
