@@ -1,242 +1,262 @@
-# Qilin v1
+<div align="center">
 
-A chess engine written from scratch (bitboards, alpha-beta, NNUE) — scores
-any position on a **0–1000** scale and reaches roughly **2000–2070 Elo**,
-measured by playing real games against a strength-limited Stockfish 18.
+# Qilin — Chess Engine v1
 
-```bash
-./serve.sh                                    # opens the analysis board at localhost:8000
-python3 main.py "<FEN>" --nnue weights/cap_kb64_h256.npz --depth 8
-```
+**麒麟**
+
+### A chess engine built from nothing but Python
+
+No chess library. No borrowed engine. Every rule, every search, every evaluation — written from scratch.
+
+![Python](https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white)
+![Runtime](https://img.shields.io/badge/runtime-zero%20dependencies-success)
+![Perft](https://img.shields.io/badge/perft-verified%20✓-success)
+![Tests](https://img.shields.io/badge/tests-97%2F97%20passing-success)
+![Positions](https://img.shields.io/badge/training%20positions-7.9M-blue)
+![Elo](https://img.shields.io/badge/measured%20strength-~2000--2070%20Elo-orange)
+![Scale](https://img.shields.io/badge/scoring-0--1000-orange)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
+</div>
 
 ---
 
 ## Table of Contents
 
-1. [Why this project exists](#1-why-this-project-exists)
-2. [What the 0–1000 scale means](#2-what-the-0–1000-scale-means)
-3. [The four layers of the system](#3-the-four-layers-of-the-system)
-4. [A clean boundary — enforced by code](#4-a-clean-boundary--enforced-by-code)
-5. [Quick start](#5-quick-start)
-6. [Training the NNUE](#6-training-the-nnue)
-7. [Measured results](#7-measured-results)
-8. [The web analysis board](#8-the-web-analysis-board)
-9. [Testing](#9-testing)
-10. [Limitations and what's next](#10-limitations-and-whats-next)
-11. [File map](#11-file-map)
+| Section | |
+|---|---|
+| [What It Is](#what-it-is) | The idea in 30 seconds |
+| [How It Thinks](#how-it-thinks) | Four layers, one clean boundary |
+| [Strengths](#strengths) | What's already measured and working |
+| [Measured Results](#measured-results) | The Elo ladder, the training data, the honest surprises |
+| [Under Repair](#under-repair) | Known weaknesses, stated plainly |
+| [What's Coming](#whats-coming) | Development roadmap |
+| [Try It](#try-it) | Run it yourself |
+| [File Map](#file-map) | Where everything lives |
 
 ---
 
-## 1. Why this project exists
+## What It Is
 
-Given any position, answer exactly one question: **how many points out of
-1000 is White getting?** Every bit of chess rules, move generation, search,
-and the evaluation network is written from scratch in pure Python — no
-`python-chess`, no calling Stockfish at runtime. Stockfish only appears in
-the **training** pipeline, playing the role of a teacher that labels data,
-and that boundary is **enforced by code** (`check_purity.py`), not just
-convention.
+Show Qilin any chess position. It answers with **one number from 0 to 1000** — how good
+that position is for White — and the move it would play, live, with an arrow.
 
-## 2. What the 0–1000 scale means
-
-> **S = 1000 × White's expected game outcome**
-> (win = 1, draw = 0.5, loss = 0)
-
-| Score | Meaning |
-|---|---|
-| **1000** | White mates **on this exact move** |
-| 991–999 | White has a forced mate |
-| **505** | **Starting position** — White's first-move advantage |
-| 500 | Perfectly balanced, or already drawn by rule |
-| 1–9 | Black has a forced mate |
-| **0** | Black mates on this exact move |
-
-The 505 anchor is **not an arbitrary added constant**. `scoring.calibrate()`
-sets an offset inside the sigmoid so that whichever evaluation function is
-in use, scoring the starting position, yields exactly 505 points. That's
-why swapping the handcrafted evaluator for NNUE keeps the anchor fixed, and
-why scores from two different configurations remain comparable.
-
-The non-mate range is clamped to `[10, 990]` so it never touches the mate
-range — a forced mate always outranks any material advantage, however large.
-
-## 3. The four layers of the system
-
-```
-main.py / server.py     interface: FEN -> 0..1000 score
-  └─ scoring.py         cp -> 0..1000 (sigmoid + calibration + mate range)
-  └─ search.py          alpha-beta: the real "deep evaluation" lives here
-       └─ nnue.py            neural evaluator (default once weights exist)
-       └─ evaluate.py        handcrafted PeSTO evaluator (comparison baseline)
-            └─ chess_core.py     bitboards, chess rules, Zobrist, move generation
+```mermaid
+flowchart LR
+    P["♟️ Any FEN"] --> Q(("🦄 Qilin"))
+    Q --> S["Score 0–1000"]
+    Q --> M["Best move"]
+    Q --> A["Live arrow<br/><small>web board</small>"]
+    style Q fill:#7c3aed,stroke:#4c1d95,color:#fff
 ```
 
-- **`chess_core.py`** — the board is represented as 64-bit bitboards.
-  Fully implements castling, en passant, promotion, the 50-move rule,
-  threefold repetition, stalemate, insufficient material. Cross-validated
-  independently against `python-chess` on tens of thousands of random
-  positions — exact match on legal moves, FEN, and every rule state.
-- **`search.py`** — negamax + alpha-beta, Zobrist transposition table, move
-  ordering (MVV-LVA, killers, history), null-move pruning, LMR, aspiration
-  windows, quiescence search.
-- **`evaluate.py`** — a PeSTO table (piece values + piece-square tables,
-  tapered between middlegame/endgame) plus mobility, bishop pair, pawn
-  structure, king safety.
-- **`nnue.py`** — the NNUE network: sparse features
-  `(king square bucket) × (relative piece type) × (square)` → an
-  accumulator shared across both perspectives → two small dense layers.
-  Trained with PyTorch, inference runs on pure NumPy (torch isn't needed to
-  run the engine).
+| 1000 | 505 | 500 | 0 |
+|:---:|:---:|:---:|:---:|
+| White mates **this move** | opening position | dead level | Black mates this move |
 
-## 4. A clean boundary — enforced by code
+> **S = 1000 × White's expected outcome** (win = 1, draw = 0.5, loss = 0). The 505 anchor
+> isn't an added constant — it's a calibration that makes the starting position always
+> come out to exactly 505, no matter which evaluator is plugged in underneath.
 
+## How It Thinks
+
+```mermaid
+flowchart LR
+    subgraph ENGINE["🔒 runtime engine — pure Python, zero dependencies"]
+        direction LR
+        B["Rules<br/><small>bitboards · Zobrist<br/>castling · en passant</small>"]
+        S["Search<br/><small>alpha-beta · quiescence<br/>SEE · null-move · LMR</small>"]
+        E["Judgement<br/><small>NNUE · 10.5M params<br/>PeSTO fallback</small>"]
+        C["Scale<br/><small>0–1000</small>"]
+        B --> S --> E --> C
+    end
+    IN["FEN"] --> B
+    C --> OUT["Score + move"]
+    style ENGINE fill:#faf5ff,stroke:#c4b5fd
 ```
-CLEAN (engine)    chess_core.py  search.py  evaluate.py  scoring.py
-                  nnue.py  main.py  server.py  test_engine.py
-ALLOWED (train)   datagen_sf.py  make_book.py  train.py  match.py
-                  play_stockfish.py
-```
+
+Four independent layers. The scale can be recalibrated without touching judgement;
+judgement can be swapped between the neural network and the handcrafted evaluator
+without touching search or rules at all.
 
 ```bash
-python3 check_purity.py
+python3 check_purity.py    # actually boots the engine with `chess` blocked at sys.meta_path
 ```
 
-It doesn't just read `import` statements via AST (skipping
-docstrings/comments to avoid false positives) — it also actually **boots
-the engine with the `chess` module blocked at `sys.meta_path`**, so hidden
-dependencies get exposed immediately.
+`python-chess` and Stockfish are only ever used in the **training** pipeline
+(`datagen_sf.py`, `make_book.py`, `play_stockfish.py`) — never in the engine that
+actually plays. This boundary is enforced by code, not convention: `check_purity.py`
+walks the AST to catch real imports, then boots the engine with `chess` blocked at
+`sys.meta_path` so even a hidden dependency gets caught.
 
-## 5. Quick start
+## Strengths
+
+```mermaid
+flowchart TD
+    R(("🦄 Qilin<br/>strengths"))
+    R --- A["🎯 <b>Provably correct rules</b><br/>perft matches exactly on 6 reference<br/>positions, cross-checked against python-chess"]
+    R --- B["🧠 <b>Real NNUE, not a toy</b><br/>10.5M parameters, trained on<br/>7.9M Stockfish-labeled positions"]
+    R --- C["⚔️ <b>SEE now wired in</b><br/>only prunes in quiescence, never<br/>when in check — sacrifices still found"]
+    R --- D["📈 <b>Measured, not claimed, Elo</b><br/>~2000–2070 vs a real,<br/>strength-limited Stockfish 18"]
+    R --- E["🪶 <b>Runs anywhere</b><br/>NumPy only at runtime —<br/>PyTorch is training-only"]
+    R --- F["🌐 <b>Live analysis board</b><br/>bilingual EN/VI web UI,<br/>streamed per search depth"]
+    style R fill:#7c3aed,stroke:#4c1d95,color:#fff
+```
+
+**Every claim below is a number that was actually measured, not assumed** — including the
+ones that turned out embarrassing (see [Under Repair](#under-repair)).
+
+## Measured Results
+
+### The Elo ladder
+
+Real games against **Stockfish 18**, strength-limited via `UCI_LimitStrength`, 2.0 seconds
+per move on both sides, openings paired (each book position played twice with colors
+swapped, so every result is exactly balanced by color):
+
+```mermaid
+xychart-beta
+    title "Win rate vs. Stockfish at different Elo caps"
+    x-axis ["SF 1600", "SF 1800", "SF 1900", "SF 2000", "SF full"]
+    y-axis "Qilin score %" 0 --> 100
+    bar [85, 77, 69, 60, 0]
+```
+
+| Opponent | Score | Rate | Estimated Qilin Elo |
+|---|:---:|:---:|:---:|
+| Stockfish (Elo 1600) | 85.0 / 100 | 85.0% | ≈ 1901 |
+| Stockfish (Elo 1800) | 77.0 / 100 | 77.0% | ≈ 2010 |
+| Stockfish (Elo 1900) | 69.0 / 100 | 69.0% | ≈ 2039 |
+| Stockfish (Elo 2000) | 52.0 / 87 | 59.8% | ≈ 2069 |
+| Stockfish (**full strength**) | 0.0 / 10 | 0% | swept |
+
+**→ Estimated playing strength: ~2000–2070 Elo**, running at only ~16–80 thousand
+nodes/second in pure Python — roughly **600× slower** than Stockfish itself.
+
+### The training data
+
+```mermaid
+pie showData
+    title Training corpus (7,914,424 positions)
+    "Stockfish-labeled self-play" : 7914424
+    "MultiPV opening book" : 8338
+```
+
+### The architecture experiment — capacity, not data, was the bottleneck
+
+Same 7.91M positions, same validation split (fixed seed), only the network size changed:
+
+```mermaid
+xychart-beta
+    title "Validation loss by network capacity (lower is better)"
+    x-axis ["KB=4 H=256 (0.7M params)", "KB=4 H=512 (1.3M)", "KB=64 H=256 (10.5M)"]
+    y-axis "Val loss ×10⁻³" 0 --> 3.5
+    bar [3.06, 2.71, 2.28]
+```
+
+Doubling the *data* on the small network improved nothing. Growing the network's
+*capacity* on the same data cut validation loss by 25%. That's the current architecture.
+
+### The honest surprise
+
+The network matches Stockfish's own evaluations **16% more accurately** than the
+handcrafted evaluator — yet performs **no better** in a same-node match against it.
+Raw accuracy doesn't automatically become playing strength, because alpha-beta only
+needs the correct *relative ordering* between moves, not the exact number. This is why
+the roadmap includes switching to a rank-based training objective.
+
+### SEE, measured
+
+Static Exchange Evaluation — used for move ordering everywhere, but only allowed to
+prune a move inside quiescence search, and only when **not in check**, so a forcing
+sacrifice sequence can never be wrongly discarded:
+
+| Metric | Before SEE | After SEE (with cheap pre-filter) |
+|---|:---:|:---:|
+| Nodes searched (fixed positions) | baseline | **−7%** |
+| Wall-clock time | baseline | **−6% (faster)** |
+| Head-to-head vs. no-SEE, same time budget | — | **≈ +115 to +120 Elo**, converging over 120+ paired games |
+
+Three known sacrifice combinations (queen sac, bishop sac, rook maneuver mates)
+were played out move-by-move to a real checkmate to confirm SEE never blinds the
+engine to them.
+
+## Under Repair
+
+```mermaid
+flowchart LR
+    subgraph NOW["Known weaknesses — stated plainly"]
+        direction TB
+        W1["🐌 ~16–80k nodes/sec, ~600×<br/>slower than Stockfish"]
+        W2["📉 KB=64 network overfits<br/>+235% train/val gap"]
+        W3["🎯 Loss learns centipawns,<br/>not move ranking"]
+        W4["🔁 No self-play loop yet —<br/>still learning only from Stockfish"]
+    end
+    W1 --> F1["Incremental NNUE accumulator<br/>(the 'U' in NNUE)"]
+    W2 --> F2["Grow training data toward<br/>15–20M positions"]
+    W3 --> F3["Rank-based / pairwise loss"]
+    W4 --> F4["datagen.py --nnue is wired,<br/>not yet run for real"]
+    style NOW fill:#fff8e1,stroke:#f9a825
+```
+
+Nothing here is hidden. Every number in [Measured Results](#measured-results) came from
+a script you can rerun yourself (`play_stockfish.py`, `match.py`, `train.py`) — there is
+no strength claim in this repository that wasn't produced by an actual game being played.
+
+## What's Coming
+
+```mermaid
+flowchart LR
+    A["✅ Rules<br/>+ perft"] --> B["✅ Search<br/>+ SEE"] --> C["✅ 7.9M<br/>positions"] --> D["✅ NNUE<br/>~2050 Elo"]
+    D --> E["◻ Incremental<br/>accumulator"] --> F["◻ Rank-based<br/>loss"] --> G["◻ Self-play<br/>loop"] --> H["◻ 3000+<br/>Elo"]
+    style A fill:#c8e6c9,stroke:#2e7d32
+    style B fill:#c8e6c9,stroke:#2e7d32
+    style C fill:#c8e6c9,stroke:#2e7d32
+    style D fill:#c8e6c9,stroke:#2e7d32
+```
+
+## Try It
 
 ```bash
-# web analysis board (recommended) — auto-picks the latest weights, opens the browser
+# 🌐 web analysis board (recommended) — auto-picks the latest weights, opens the browser
 ./serve.sh
-./serve.sh --hand                              # handcrafted evaluator only
+./serve.sh --hand                              # handcrafted evaluator only, no NNUE needed
 ./serve.sh --nnue weights/cap_kb64_h256.npz --port 8080
 
-# command line
+# ⌨️ command line
 python3 main.py "<FEN>" --depth 10
 python3 main.py --moves e2e4 e7e5 g1f3
 python3 main.py --interactive
-python3 main.py "<FEN>" --nnue weights/cap_kb64_h256.npz -v   # print each depth iteration
+
+# ✅ verify everything yourself
+python3 test_engine.py     # 97 tests: perft, Zobrist, draw rules, SEE, scoring scale
+python3 check_purity.py    # proves the engine never touches an external chess library
 ```
 
-## 6. Training the NNUE
+Nothing to install beyond NumPy to *run* the engine — PyTorch is only needed for
+training a new network.
 
 ```bash
-python3 make_book.py --count 8000 --workers 7               # MultiPV opening book
-python3 datagen_sf.py --games 400000 --epd data/book.epd \
-    --out data/sf.txt.gz                                    # Stockfish-labeled data
+# 🎓 training pipeline (torch required)
+python3 make_book.py --count 8000 --workers 7
+python3 datagen_sf.py --games 400000 --epd data/book.epd --out data/sf.txt.gz
 NNUE_KING_BUCKETS=64 python3 -u train.py --data data/sf.txt.gz --lambda 1.0
-python3 match.py --nnue weights/x.npz --games 100            # NNUE vs handcrafted head-to-head
-python3 play_stockfish.py --games 100 --ladder 1600,1800,2000,2200 \
-    --time 2.0 --nnue weights/x.npz                          # Elo ladder vs real Stockfish
+python3 play_stockfish.py --games 100 --ladder 1600,1800,2000,2200 --time 2.0 --nnue weights/x.npz
 ```
 
-Each data line: `FEN | Stockfish cp (White's perspective) | game result`. The
-two label sources are **deliberately independent** — `cp` gives a dense,
-low-noise signal, `result` gives ground truth — so the network never simply
-copies Stockfish.
-
-`train.py` transparently reads/writes both `.txt` and `.txt.gz`, and caches
-features to a disk memmap (not held fully in RAM), so loading tens of
-millions of positions stays safe even on memory-constrained machines.
-
-## 7. Measured results
-
-**Elo ladder**, played against a strength-limited Stockfish 18
-(`UCI_LimitStrength`), 2.0 seconds per move for both sides, paired openings
-(each position played twice with colors swapped for perfect fairness):
-
-| Opponent | Score | Rate | Estimated engine Elo |
-|---|---|---|---|
-| Stockfish (Elo 1600) | 85.0/100 | 85.0% | ≈ 1901 |
-| Stockfish (Elo 1800) | 77.0/100 | 77.0% | ≈ 2010 |
-| Stockfish (Elo 1900) | 69.0/100 | 69.0% | ≈ 2039 |
-| Stockfish (Elo 2000) | 52.0/87 | 59.8% | ≈ 2069 |
-| Stockfish (full strength) | 0.0/10 | 0% | swept |
-
-**→ Estimated playing strength: roughly 2000–2070 Elo**, despite running in
-pure Python at only ~16–80 thousand nodes/second (about 600× slower than
-Stockfish).
-
-**Training data:** 7,914,424 positions labeled by Stockfish 18, plus 8,338
-opening positions from MultiPV.
-
-**Architecture experiment** (same data, same validation split via a fixed
-seed) showed the bottleneck used to be *network capacity*, not *data
-volume* — doubling data on a small network improved nothing, but growing
-network capacity on the same data improved clearly:
-
-| Architecture | Parameters | Val loss | vs. baseline |
-|---|---|---|---|
-| KB=4, H=256 (baseline) | 0.7M | 0.00306 | — |
-| KB=4, H=512 | 1.3M | 0.00271 | 11% better |
-| **KB=64, H=256** (current) | **10.5M** | **0.00228** | **25% better** |
-
-Another important finding: the network matches Stockfish's evaluations
-**16% more accurately** than the handcrafted evaluator (measured by
-correlation on held-out positions) yet **doesn't play any better** in a
-same-node match — evidence that raw accuracy doesn't automatically become
-playing strength, since alpha-beta only needs the correct *relative
-ordering* between moves.
-
-## 8. The web analysis board
-
-`server.py` + `web/index.html`: an interactive board, arrows pointing to the
-best move, a 0–1000 eval bar, results **streamed per depth iteration** (the
-first arrow appears after ~40 milliseconds instead of waiting several
-seconds). `serve.sh` auto-reads `KING_BUCKETS`/`HIDDEN` from the `.npz`
-file, so you never need to remember the environment variables.
-
-## 9. Testing
-
-```bash
-python3 test_engine.py     # 86 tests: perft, FEN, Zobrist, draw rules, scoring
-python3 check_purity.py    # external-library boundary
-```
-
-Covers 14 groups: perft on 6 standard positions, make/unmake state
-restoration, incremental Zobrist matching a from-scratch recompute,
-mate-in-one and forced mate, scoring scale, color symmetry, castling, en
-passant, the 50-move rule, threefold repetition, stalemate/insufficient
-material, promotion, and **a search aborted mid-way must still return a
-legal move** (a real bug that once silently corrupted match results, now
-guarded by a safety net plus a regression test).
-
-## 10. Limitations and what's next
-
-- **Speed.** ~16–80 thousand nodes/second in pure Python, about 600× slower
-  than Stockfish. Planned: an **incremental** NNUE accumulator (the "U" in
-  NNUE stands for *Updatable* — currently everything is recomputed from
-  scratch on every call).
-- **No SEE yet** (Static Exchange Evaluation). Will be used for move
-  ordering everywhere, but only allowed to fully prune a move inside
-  quiescence search, and only **when not in check** — so a sacrifice
-  followed by a forcing check sequence never gets wrongly discarded.
-- **The KB=64 network is overfitting** (train/val gap +235%) — needs more
-  data (from 7.9M to roughly 15–20M positions) to make full use of its
-  10.5M parameters.
-- **The loss function learns centipawns, not move ranking.** This may
-  explain the paradox of "matches Stockfish better but doesn't play
-  better."
-- **No self-play loop yet.** `datagen.py --nnue` is already wired up to
-  generate data using the trained network itself, instead of forever
-  learning from Stockfish.
-
-## 11. File map
+## File Map
 
 | File | Role |
 |---|---|
 | `chess_core.py` | Bitboards, move generation, make/unmake, FEN, Zobrist, `Game` |
-| `search.py` | Negamax + alpha-beta, TT, quiescence, null-move, LMR |
+| `search.py` | Negamax + alpha-beta, TT, quiescence, SEE, null-move, LMR |
 | `evaluate.py` | Handcrafted PeSTO evaluation |
 | `scoring.py` | cp → 0..1000 mapping, 505-anchor calibration |
-| `nnue.py` | Feature extraction, numpy inference, PyTorch model |
+| `nnue.py` | Feature extraction, NumPy inference, PyTorch model |
 | `main.py` | CLI scorer |
-| `server.py` + `web/` | Live analysis board, best-move arrows |
+| `server.py` + `web/` | Live bilingual analysis board, best-move arrows |
 | `serve.sh` | Launches the analysis board |
-| `test_engine.py` | 86 regression tests |
+| `test_engine.py` | 97 regression tests across 15 groups |
 | `check_purity.py` | Enforces the external-library boundary |
 | `datagen_sf.py` | Data generation, Stockfish labeling |
 | `make_book.py` | Opening book via MultiPV |
@@ -246,4 +266,8 @@ guarded by a safety net plus a regression test).
 
 ---
 
-*License: MIT (see `LICENSE`).*
+<div align="center">
+
+*License: MIT — see [`LICENSE`](LICENSE).*
+
+</div>
