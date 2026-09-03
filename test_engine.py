@@ -261,6 +261,37 @@ for _t in range(40):
 check("{} lượt ngắt giữa chừng đều trả nước hợp lệ".format(_n), _bad == 0,
       "{} nước sai".format(_bad))
 
+print("\n== 15. SEE (Static Exchange Evaluation)")
+from search import see as _see
+from chess_core import parse_uci as _puci
+# Giá trị tính tay theo thang SEE_VAL (T=100 M=320 Tg=330 X=500 H=900)
+_SEE_CASES = [
+    ("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5", 100, "tốt ăn tốt trống"),
+    ("4k3/8/2p5/3p4/4P3/8/8/4K3 w - - 0 1", "e4d5", 0, "tốt ăn tốt, tốt ăn lại"),
+    ("4k3/8/2p5/3p4/8/8/8/3RK3 w - - 0 1", "d1d5", -400, "xe ăn tốt, tốt ăn lại xe"),
+    ("4k3/8/8/3p4/8/8/8/3RK3 w - - 0 1", "d1d5", 100, "xe ăn tốt trống"),
+    ("4k3/8/2p5/3p4/2B5/8/8/4K3 w - - 0 1", "c4d5", -230, "tượng ăn tốt, tốt ăn lại"),
+    ("4k3/8/5n2/3p4/2B5/8/8/3RK3 w - - 0 1", "c4d5", 90, "chuỗi 3 lượt, xe lộ ra sau tượng"),
+    ("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 2", "e5d6", 100, "bắt tốt qua đường"),
+    ("4k3/3r4/8/3q4/8/8/8/3RK3 w - - 0 1", "d1d5", 400, "xe ăn hậu, xe ăn lại"),
+    ("4k3/8/8/8/8/8/8/4K3 w - - 0 1", "e1e2", 0, "không phải nước ăn quân"),
+]
+for _fen, _uci, _want, _note in _SEE_CASES:
+    _p = Position(_fen)
+    _m = _puci(_p, _uci)
+    check("see {} = {} ({})".format(_uci, _want, _note),
+          _m is not None and _see(_p, _m) == _want,
+          "được {}".format(_see(_p, _m) if _m else "nước không hợp lệ"))
+
+# SEE chỉ được cắt tỉa trong quiescence khi KHÔNG bị chiếu - đòn hy sinh có
+# chuỗi chiếu ép buộc phía sau không bao giờ được phép bị loại.
+for _fen, _want in [("2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - 0 1", 2),
+                    ("r1bq2r1/b4pk1/p1pp1p2/1p2pP2/1P2P1PB/3P4/1PPQ2P1/R3K2R w KQ - 0 1", 2)]:
+    _r = Searcher().search(Position(_fen), depth=9)
+    check("hy sinh vẫn tìm ra chiếu hết #{}".format(_want),
+          abs(scoring.mate_distance(_r["score"])) == _want,
+          "#{}".format(abs(scoring.mate_distance(_r["score"]))))
+
 print()
 if fails:
     print("THẤT BẠI ({}): {}".format(len(fails), ", ".join(fails)))

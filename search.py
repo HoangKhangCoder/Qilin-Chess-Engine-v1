@@ -7,7 +7,10 @@ quy về GÓC NHÌN TRẮNG (dương = Trắng hơn).
 
 import time
 
-from chess_core import WHITE, PAWN, QUEEN, F_PROMO, F_EP, move_str
+from chess_core import (
+    WHITE, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, F_PROMO, F_EP, move_str,
+    KNIGHT_ATT, KING_ATT, PAWN_ATT, bishop_attacks, rook_attacks,
+)
 from evaluate import evaluate_stm
 from scoring import MATE_VALUE, MATE_BOUND
 
@@ -17,6 +20,91 @@ QS_MAX_DEPTH = 24      # trần độ sâu quiescence
 QS_CHECK_DEPTH = 6     # chỉ nối tiếp chuỗi chiếu trong ngần này tầng
 
 TT_EXACT, TT_LOWER, TT_UPPER = 0, 1, 2
+
+
+
+# Giá trị quân dùng riêng cho SEE - phải là thang đơn giản, nhất quán, vì SEE
+# chỉ cộng trừ dọc chuỗi ăn quân chứ không hiểu gì về thế cờ.
+SEE_VAL = (100, 320, 330, 500, 900, 20000)
+
+
+def see(pos, move):
+    """Static Exchange Evaluation: cộng dồn chuỗi ăn qua lại trên ô đích.
+
+    Trả về số centipawn LỜI (dương) hay LỖ (âm) nếu thực hiện nước ăn quân này
+    rồi hai bên thay nhau ăn lại bằng quân rẻ nhất cho tới khi không ai muốn ăn.
+
+    Đây là phép tính TĨNH - nó không biết gì về chiếu, ghim, hay đòn phối hợp.
+    Vì vậy nó chỉ được dùng để SẮP XẾP thứ tự nước đi ở mọi nơi, và chỉ được
+    phép CẮT BỎ hẳn nước đi trong quiescence khi không bị chiếu (xem quiesce).
+    """
+    frm = move & 63
+    to = (move >> 6) & 63
+    flag = (move >> 15) & 7
+    board = pos.board
+
+    if flag == F_EP:
+        captured_val = SEE_VAL[PAWN]
+    else:
+        victim = board[to]
+        if victim < 0:
+            return 0                      # không phải nước ăn quân
+        captured_val = SEE_VAL[victim % 6]
+
+    attacker = board[frm]
+    if attacker < 0:
+        return 0
+    att_type = attacker % 6
+
+    # gain[i] = điểm ròng nếu chuỗi ăn dừng lại sau lượt thứ i
+    gain = [captured_val]
+    occ = pos.all_bb ^ (1 << frm)
+    if flag == F_EP:
+        occ ^= 1 << (to - 8 if pos.side == WHITE else to + 8)
+    occ |= 1 << to
+
+    side = pos.side ^ 1
+    on_square = att_type          # quân đang đứng trên ô đích, sẽ bị ăn tiếp
+
+    # Quân trượt có thể lộ ra sau khi quân trước rời đi, nên phải tính lại
+    # attackers theo `occ` hiện tại ở mỗi lượt thay vì tính một lần.
+    for _ in range(31):
+        att = _attackers_to(pos, to, side, occ) & occ
+        if not att:
+            break
+        bb, t = _least_valuable(pos, att, side)
+        if not bb:
+            break
+        gain.append(SEE_VAL[on_square] - gain[-1])
+        occ ^= bb
+        on_square = t
+        side ^= 1
+
+    # lùi ngược: mỗi bên chỉ ăn tiếp nếu việc đó có lợi cho mình
+    for i in range(len(gain) - 2, -1, -1):
+        gain[i] = -max(-gain[i], gain[i + 1])
+    return gain[0]
+
+
+def _attackers_to(pos, sq, by, occ):
+    """Như Position.attackers_to nhưng theo occupancy TÙY Ý (đang mô phỏng)."""
+    base = by * 6
+    res = PAWN_ATT[by ^ 1][sq] & pos.pieces[base + PAWN]
+    res |= KNIGHT_ATT[sq] & pos.pieces[base + KNIGHT]
+    res |= KING_ATT[sq] & pos.pieces[base + KING]
+    res |= bishop_attacks(sq, occ) & (pos.pieces[base + BISHOP] | pos.pieces[base + QUEEN])
+    res |= rook_attacks(sq, occ) & (pos.pieces[base + ROOK] | pos.pieces[base + QUEEN])
+    return res
+
+
+def _least_valuable(pos, attackers, color):
+    """Quân RẺ NHẤT của `color` - luôn ăn bằng quân rẻ trước."""
+    base = color * 6
+    for t in (PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING):
+        bb = attackers & pos.pieces[base + t]
+        if bb:
+            return (bb & -bb), t
+    return 0, -1
 
 
 class SearchAbort(Exception):
@@ -65,10 +153,21 @@ class Searcher:
             frm = m & 63
             victim = board[to]
             flag = (m >> 15) & 7
-            if victim >= 0:
-                s = 1_000_000 + PIECE_VAL[victim % 6] * 16 - PIECE_VAL[board[frm] % 6]
-            elif flag == F_EP:
-                s = 1_000_000 + PIECE_VAL[PAWN] * 16 - PIECE_VAL[PAWN]
+            if victim >= 0 or flag == F_EP:
+                # MVV-LVA xếp "ăn quân to bằng quân nhỏ" lên đầu, nhưng không
+                # biết ô đó có được bảo vệ hay không. SEE biết. Nước ăn LỖ bị
+                # đẩy xuống DƯỚI cả nước im lặng (chứ không bị loại - đòn hy
+                # sinh vẫn phải được thử, chỉ là thử sau).
+                mvv = PIECE_VAL[victim % 6] if victim >= 0 else PIECE_VAL[PAWN]
+                lva = PIECE_VAL[board[frm] % 6]
+                # SEE trong Python thuần đắt (đo được: bật vô điều kiện làm
+                # CHẬM 15% dù giảm 8% số nút). Ăn quân to bằng quân nhỏ thì
+                # chắc chắn không lỗ - khỏi cần tính. Chỉ tính khi quân ăn
+                # đắt hơn quân bị ăn, tức là mới CÓ THỂ lỗ.
+                if lva <= mvv or see(pos, m) >= 0:
+                    s = 1_000_000 + mvv * 16 - lva
+                else:
+                    s = -1_000_000 + mvv * 16 - lva
             elif flag == F_PROMO:
                 s = 900_000 + PIECE_VAL[(m >> 12) & 7]
             elif m == killers[0]:
@@ -108,8 +207,19 @@ class Searcher:
         moves = self._order(pos, moves, ply, 0)
         legal = 0
         for m in moves:
-            # delta pruning: bỏ qua nước ăn quân không thể kéo lại thế cờ
             if not in_check:
+                # CHỈ cắt tỉa khi KHÔNG bị chiếu. Đòn hy sinh thiên tài luôn
+                # đi kèm chuỗi chiếu ép buộc, và mọi nước trong chuỗi đó rơi
+                # vào nhánh in_check bên dưới - nên không bao giờ bị SEE loại.
+                # Trong search chính (negamax) SEE cũng không cắt gì cả, chỉ
+                # dùng để sắp xếp, nên nước hy sinh vẫn được tìm kiếm đầy đủ.
+                _v = pos.board[(m >> 6) & 63]
+                if ((m >> 15) & 7 != F_PROMO and _v >= 0
+                        and PIECE_VAL[pos.board[m & 63] % 6] > PIECE_VAL[_v % 6]
+                        and see(pos, m) < 0):
+                    continue
+
+                # delta pruning: bỏ qua nước ăn quân không thể kéo lại thế cờ
                 victim = pos.board[(m >> 6) & 63]
                 gain = PIECE_VAL[victim % 6] if victim >= 0 else PIECE_VAL[PAWN]
                 if (m >> 15) & 7 == F_PROMO:
