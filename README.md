@@ -2,8 +2,6 @@
 
 # Qilin — Chess Engine v1
 
-**麒麟**
-
 ### A chess engine built from nothing but Python
 
 No chess library. No borrowed engine. Every rule, every search, every evaluation — written from scratch.
