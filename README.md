@@ -2,7 +2,7 @@
 
 # Qilin — Chess Engine v1
 
-### A chess engine built from nothing but Python
+### A chess engine built from Neural Networks and Python
 
 No chess library. No borrowed engine. Every rule, every search, every evaluation — written from scratch.
 
@@ -11,7 +11,7 @@ No chess library. No borrowed engine. Every rule, every search, every evaluation
 ![Perft](https://img.shields.io/badge/perft-verified%20✓-success)
 ![Tests](https://img.shields.io/badge/tests-97%2F97%20passing-success)
 ![Positions](https://img.shields.io/badge/training%20positions-7.9M-blue)
-![Elo](https://img.shields.io/badge/measured%20strength-~2000--2070%20Elo-orange)
+![Elo](https://img.shields.io/badge/beats%20Stockfish%20limited%20to%201600--2000-orange)
 ![Scale](https://img.shields.io/badge/scoring-0--1000-orange)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -38,6 +38,13 @@ No chess library. No borrowed engine. Every rule, every search, every evaluation
 
 Show Qilin any chess position. It answers with **one number from 0 to 1000** — how good
 that position is for White — and the move it would play, live, with an arrow.
+
+> **A note on the Elo numbers below, upfront:** they come from Stockfish's
+> `UCI_LimitStrength` mode, which is calibrated to imitate *human* mistakes, not a
+> genuine engine of that rating. Playing against another engine, that imitation can be
+> exploited very differently than a real 1600–2000 Elo player would be — see
+> [Measured Results](#measured-results) for the actual data and why we don't trust the
+> extrapolated "Qilin Elo" column as a real number.
 
 ```mermaid
 flowchart LR
@@ -95,7 +102,7 @@ flowchart TD
     R --- A["🎯 <b>Provably correct rules</b><br/>perft matches exactly on 6 reference<br/>positions, cross-checked against python-chess"]
     R --- B["🧠 <b>Real NNUE, not a toy</b><br/>10.5M parameters, trained on<br/>7.9M Stockfish-labeled positions"]
     R --- C["⚔️ <b>SEE now wired in</b><br/>only prunes in quiescence, never<br/>when in check — sacrifices still found"]
-    R --- D["📈 <b>Measured, not claimed, Elo</b><br/>~2000–2070 vs a real,<br/>strength-limited Stockfish 18"]
+    R --- D["📈 <b>Beats limited Stockfish</b><br/>100% at Elo 1600–2000,<br/>0% at full strength — see caveat"]
     R --- E["🪶 <b>Runs anywhere</b><br/>NumPy only at runtime —<br/>PyTorch is training-only"]
     R --- F["🌐 <b>Live analysis board</b><br/>bilingual EN/VI web UI,<br/>streamed per search depth"]
     style R fill:#7c3aed,stroke:#4c1d95,color:#fff
@@ -106,11 +113,21 @@ ones that turned out embarrassing (see [Under Repair](#under-repair)).
 
 ## Measured Results
 
-### The Elo ladder
+### The Elo ladder — and why the "Elo" column is not trustworthy
 
 Real games against **Stockfish 18**, strength-limited via `UCI_LimitStrength`, 2.0 seconds
 per move on both sides, openings paired (each book position played twice with colors
-swapped, so every result is exactly balanced by color):
+swapped, so every result is exactly balanced by color).
+
+**The raw win rates are real.** The "estimated Qilin Elo" column is not — it's the classic
+Elo-model extrapolation from a single game's win rate, and here's the tell that it's
+wrong: if Qilin had one fixed Elo, all four estimates below should land close together.
+They don't. They climb steadily with the opponent's rating (1901 → 2010 → 2039 → 2069),
+which the Elo model says shouldn't happen. That drift, plus going 100% at Elo 1600–2000
+and then **0/10** at full strength — too sharp a cliff for a smooth Elo curve — points to
+the same root cause: `UCI_LimitStrength` is calibrated to imitate *human* weaknesses, not
+a genuine engine of that rating, so it doesn't behave like a real opponent of that Elo when
+the other side is a machine.
 
 ```mermaid
 xychart-beta
@@ -128,8 +145,12 @@ xychart-beta
 | Stockfish (Elo 2000) | 52.0 / 87 | 59.8% | ≈ 2069 |
 | Stockfish (**full strength**) | 0.0 / 10 | 0% | swept |
 
-**→ Estimated playing strength: ~2000–2070 Elo**, running at only ~16–80 thousand
-nodes/second in pure Python — roughly **600× slower** than Stockfish itself.
+**→ What can honestly be claimed: Qilin reliably beats Stockfish limited to 1600–2000
+Elo, and loses every game against Stockfish at full strength.** Anything more precise
+than that (a single Elo number) would need a rating pool of real, independently-rated
+engines to anchor against — which this repository does not yet have. Running at only
+~16–80 thousand nodes/second in pure Python (roughly **600× slower** than Stockfish
+itself) is the more concrete, trustworthy fact about where Qilin stands.
 
 ### The training data
 
@@ -261,6 +282,22 @@ python3 play_stockfish.py --games 100 --ladder 1600,1800,2000,2200 --time 2.0 --
 | `train.py` | NNUE training |
 | `match.py` | Head-to-head between two evaluators |
 | `play_stockfish.py` | Real games against Stockfish, PGN export, Elo ladder |
+
+---
+
+## Acknowledgments
+
+Qilin's runtime engine never imports either of these — see
+[How It Thinks](#how-it-thinks) — but the **training pipeline** leans on both, and that
+deserves a proper thank-you:
+
+- **[Stockfish](https://stockfishchess.org/)** — the real Stockfish 18 binary labels every
+  one of the 7.9M training positions and plays every opponent in the Elo ladder. Qilin's
+  NNUE is trained on its judgement; none of its code is used or redistributed.
+- **[python-chess](https://python-chess.readthedocs.io/)** — powers move validation, PGN
+  export, and UCI plumbing in the training/testing tooling (`datagen_sf.py`,
+  `play_stockfish.py`, `check_purity.py`'s own cross-validation). Never imported by the
+  engine that actually plays.
 
 ---
 
