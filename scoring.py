@@ -73,15 +73,35 @@ def score_to_cp(score):
     return SCALE * math.log(s / (1.0 - s)) - _CALIB
 
 
-def explain(score, cp=None):
-    """Diễn giải điểm số bằng tiếng Việt."""
+def explain(score, cp=None, lang="vi"):
+    """Diễn giải điểm số. lang="vi" hoặc "en"."""
+    en = lang == "en"
     n = mate_distance(cp) if cp is not None else 0
     if n > 0:
+        if en:
+            return "White mates in {}".format(n) if n > 1 else "White MATES on this move"
         return "Trắng chiếu hết sau {} nước".format(n) if n > 1 else "Trắng CHIẾU HẾT ngay nước này"
     if n < 0:
+        if en:
+            return "Black mates in {}".format(-n) if n < -1 else "Black MATES on this move"
         return "Đen chiếu hết sau {} nước".format(-n) if n < -1 else "Đen CHIẾU HẾT ngay nước này"
     d = score - 500
     a = abs(d)
+    if en:
+        who = "White" if d > 0 else "Black"
+        if a < 8:
+            return "Equal"
+        if a < 30:
+            return "{} is very slightly better".format(who)
+        if a < 80:
+            return "{} is slightly better".format(who)
+        if a < 180:
+            return "{} is clearly better".format(who)
+        if a < 330:
+            return "{} has a large advantage".format(who)
+        if a < 460:
+            return "{} is winning".format(who)
+        return "{} is completely winning".format(who)
     who = "Trắng" if d > 0 else "Đen"
     if a < 8:
         return "Cân bằng"

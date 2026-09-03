@@ -97,7 +97,7 @@ label{color:var(--muted);font-size:12.5px}
   </div>
 
   <div class="panel">
-    <h1>Bàn phân tích <small>— thang 0–1000 cho Trắng</small></h1>
+    <h1><span id="t-title">Bàn phân tích</span> <small id="t-sub">— thang 0–1000 cho Trắng</small><button id="lang" style="float:right;padding:3px 9px;font-size:12px">EN</button></h1>
 
     <div class="card">
       <div class="score"><span id="score">505</span><small> / 1000</small></div>
@@ -107,7 +107,7 @@ label{color:var(--muted);font-size:12.5px}
 
     <div class="card">
       <div style="color:var(--muted);font-size:12px;margin-bottom:3px">
-        Nước tốt nhất cho <b id="turn">Trắng</b></div>
+        <span id="t-bestfor">Nước tốt nhất cho</span> <b id="turn">Trắng</b></div>
       <div class="best" id="best">—</div>
       <div class="pv" id="pv"></div>
       <div class="pv" id="after" style="margin-top:6px"></div>
@@ -119,23 +119,23 @@ label{color:var(--muted);font-size:12.5px}
 
     <div class="card">
       <div class="row" style="margin-bottom:8px">
-        <label>Máy</label><select id="engine"></select>
-        <label>Độ sâu</label><select id="depth"></select>
+        <label id="t-engine">Máy</label><select id="engine"></select>
+        <label id="t-depth">Độ sâu</label><select id="depth"></select>
       </div>
       <div class="row">
-        <button id="undo">↶ Lùi</button>
-        <button id="reset">Ván mới</button>
-        <button id="flip">⇅ Xoay</button>
-        <button id="play">▶ Đi nước máy gợi ý</button>
+        <button id="undo">↶ <span id="t-undo">Lùi</span></button>
+        <button id="reset"><span id="t-reset">Ván mới</span></button>
+        <button id="flip">⇅ <span id="t-flip">Xoay</span></button>
+        <button id="play">▶ <span id="t-play">Đi nước máy gợi ý</span></button>
       </div>
       <div class="row" style="margin-top:8px">
         <input type="text" id="fen" spellcheck="false">
-        <button id="loadfen">Nạp FEN</button>
+        <button id="loadfen"><span id="t-loadfen">Nạp FEN</span></button>
       </div>
     </div>
 
     <div class="card">
-      <div style="color:var(--muted);font-size:12px;margin-bottom:4px">Nước đã đi</div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:4px"><span id="t-movelist">Nước đã đi</span></div>
       <div class="moves" id="movelist">—</div>
     </div>
   </div>
@@ -148,6 +148,39 @@ const START="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const $=id=>document.getElementById(id);
 let state={start:START,moves:[],flip:false,sel:null,data:null,abort:null,
            shown:START};   // shown = thế cờ ĐANG VẼ, có thể đi trước máy chủ
+
+
+/* ---------- song ngữ: mọi chuỗi hiển thị đều đi qua T() ---------- */
+const LANG={
+ vi:{title:"Bàn phân tích",sub:"— thang 0–1000 cho Trắng",engine:"Máy",depth:"Độ sâu",
+     undo:"Lùi",reset:"Ván mới",flip:"Xoay",play:"Đi nước máy gợi ý",loadfen:"Nạp FEN",
+     movelist:"Nước đã đi",bestfor:"Nước tốt nhất cho",white:"Trắng",black:"Đen",
+     pvline:"biến chính: ",ifplay:(m,s)=>`nếu đi ${m} → điểm thành ${s}`,
+     incheck:"đang bị chiếu",repeat:n=>`lặp ${n} lần`,fifty:n=>`50 nước: ${n}/100`,
+     castling:"nhập thành: ",ep:"bắt qua đường: ",rejected:"nước bị từ chối",
+     eval:"lượng giá",stat:"tĩnh",deep:"sâu",depthlbl:"độ sâu",nodes:"số nút",
+     time:"thời gian",nps:"k nút/s",mateIn:n=>`chiếu hết sau ${n} nước`,
+     disconnected:"Mất kết nối máy chủ",error:"Lỗi"},
+ en:{title:"Analysis board",sub:"— 0–1000 scale for White",engine:"Engine",depth:"Depth",
+     undo:"Undo",reset:"New game",flip:"Flip",play:"Play engine move",loadfen:"Load FEN",
+     movelist:"Moves played",bestfor:"Best move for",white:"White",black:"Black",
+     pvline:"main line: ",ifplay:(m,s)=>`after ${m} → score becomes ${s}`,
+     incheck:"in check",repeat:n=>`repeated ${n}×`,fifty:n=>`50-move: ${n}/100`,
+     castling:"castling: ",ep:"en passant: ",rejected:"move rejected",
+     eval:"evaluator",stat:"static",deep:"deep",depthlbl:"depth",nodes:"nodes",
+     time:"time",nps:"k nodes/s",mateIn:n=>`mate in ${n}`,
+     disconnected:"Lost connection to server",error:"Error"}};
+let LG=(()=>{try{return localStorage.getItem("qilin_lang")||"vi"}catch(e){return "vi"}})();
+const T=(k,...a)=>{const v=LANG[LG][k];return typeof v==="function"?v(...a):v};
+function applyLang(){
+  for(const k of ["title","sub","engine","depth","undo","reset","flip","play",
+                  "loadfen","movelist","bestfor"]){
+    const el=$("t-"+k); if(el) el.textContent=T(k);
+  }
+  $("lang").textContent = LG==="vi" ? "EN" : "VI";
+  document.documentElement.lang = LG;
+  if(state.data) render();
+}
 
 /* ---------- bàn cờ dựng MỘT LẦN, sau đó chỉ cập nhật tại chỗ ----------
    Bản cũ gọi innerHTML="" rồi createElement 64 ô cho mỗi lần bấm chuột và mỗi
@@ -304,6 +337,9 @@ function push(mv){
   const guess=state.data?applyLocal(state.data.fen,mv):null;
   state.moves.push(mv); state.sel=null;
   if(guess){ state.shown=guess; prev={}; paint(guess); drawArrows(null); }
+  // Danh sách nước hợp lệ giờ thuộc về thế cờ CŨ. Không xoá thì bấm nhanh
+  // sẽ đẩy được nước chỉ hợp lệ ở thế trước, máy chủ từ chối và bàn cờ lùi.
+  if(state.data) state.data={...state.data, legal:[]};
   refresh();
 }
 
@@ -326,10 +362,10 @@ async function refresh(){
         const line=buf.slice(0,i); buf=buf.slice(i+1);
         if(!line.trim()) continue;
         const d=JSON.parse(line);
-        if(d.error){$("best").textContent="Lỗi: "+d.error;$("best").className="best warn";return;}
+        if(d.error){$("best").textContent=T("error")+": "+d.error;$("best").className="best warn";return;}
         if(d.init){                 // gói đầu tiên: đủ để vẽ bàn và bấm nước đi
           state.data=Object.assign({},d,{pv:[],score:null}); state.shown=d.fen;
-          $("turn").textContent=d.side==="w"?"Trắng":"Đen";
+          $("turn").textContent=d.side==="w"?T("white"):T("black");
           paint(d.fen); drawArrows(null);
         }
         else if(d.partial){ partial(d); }
@@ -337,7 +373,7 @@ async function refresh(){
       }
     }
   }catch(e){ if(e.name!=="AbortError"){
-    $("best").textContent="Mất kết nối máy chủ"; $("best").className="best warn"; } }
+    $("best").textContent=T("disconnected"); $("best").className="best warn"; } }
 }
 
 /* cập nhật nhẹ theo từng tầng độ sâu - đây là thứ làm nó mượt như Stockfish */
@@ -352,29 +388,33 @@ function partial(d){
 function render(){
   const d=state.data;
   $("score").textContent=d.score; setBar(d.score);
-  $("verdict").textContent=d.note||d.explain||"";
-  $("turn").textContent=d.side==="w"?"Trắng":"Đen";
+  $("verdict").textContent=(LG==="en"?(d.note_en||d.explain_en):(d.note||d.explain))||"";
+  $("turn").textContent=d.side==="w"?T("white"):T("black");
   $("best").className="best";
-  $("best").textContent=d.best?d.best:(d.outcome?d.outcome_text:"\u2014");
-  $("pv").textContent=d.pv&&d.pv.length?"biến chính: "+d.pv.join(" "):"";
+  $("best").textContent=d.best?d.best:(d.outcome?(LG==="en"?d.outcome_text_en:d.outcome_text):"\u2014");
+  $("pv").textContent=d.pv&&d.pv.length?T("pvline")+d.pv.join(" "):"";
   $("after").textContent=(d.score_after!==undefined&&d.best)
-    ? `nếu đi ${d.best} \u2192 điểm thành ${d.score_after}`:"";
+    ? T("ifplay",d.best,d.score_after):"";
   $("fen").value=d.fen;
   const fl=[];
-  if(d.in_check) fl.push("đang bị chiếu");
-  if(d.repetitions>1) fl.push("lặp "+d.repetitions+" lần");
-  if(d.halfmove>=80) fl.push("50 nước: "+d.halfmove+"/100");
-  if(d.castling) fl.push("nhập thành: "+d.castling);
-  if(d.ep) fl.push("bắt qua đường: "+d.ep);
-  if(d.outcome) fl.push(d.outcome+" \u2014 "+d.outcome_text);
+  if(d.in_check) fl.push(T("incheck"));
+  if(d.repetitions>1) fl.push(T("repeat",d.repetitions));
+  if(d.halfmove>=80) fl.push(T("fifty",d.halfmove));
+  if(d.castling) fl.push(T("castling")+d.castling);
+  if(d.ep) fl.push(T("ep")+d.ep);
+  if(d.outcome) fl.push(d.outcome+" \u2014 "+(LG==="en"?d.outcome_text_en:d.outcome_text));
+  if(d.rejected&&d.rejected.length){
+    fl.push("\u26a0 "+T("rejected")+": "+d.rejected.join(", "));
+    if(d.moves) state.moves=d.moves.slice();   // đồng bộ với thứ máy chủ thật sự nhận
+  }
   $("flags").innerHTML=fl.map(t=>`<span class="flag">${t}</span>`).join("");
-  const rows=[["lượng giá",d.engine],
-    ["tĩnh",d.static!==undefined?(d.static>0?"+":"")+d.static+"cp":"\u2014"],
-    ["sâu",d.mate_in?("chiếu hết sau "+Math.abs(d.mate_in)+" nước"):
+  const rows=[[T("eval"),d.engine],
+    [T("stat"),d.static!==undefined?(d.static>0?"+":"")+d.static+"cp":"\u2014"],
+    [T("deep"),d.mate_in?T("mateIn",Math.abs(d.mate_in)):
       (d.cp!==null&&d.cp!==undefined?((d.cp>0?"+":"")+d.cp+"cp"):"\u2014")],
-    ["độ sâu",d.depth+(d.seldepth?"/"+d.seldepth:"")],
-    ["số nút",(d.nodes||0).toLocaleString("vi")],
-    ["thời gian",(d.elapsed||0)+"s"+(d.elapsed>0?"  ("+Math.round(d.nodes/d.elapsed/1000)+"k nút/s)":"")]];
+    [T("depthlbl"),d.depth+(d.seldepth?"/"+d.seldepth:"")],
+    [T("nodes"),(d.nodes||0).toLocaleString(LG)],
+    [T("time"),(d.elapsed||0)+"s"+(d.elapsed>0?"  ("+Math.round(d.nodes/d.elapsed/1000)+T("nps")+")":"")]];
   $("stats").innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join("");
   const ml=[];
   for(let i=0;i<state.moves.length;i+=2)
@@ -401,7 +441,12 @@ $("loadfen").onclick=()=>{state.start=$("fen").value.trim()||START;
 document.onkeydown=e=>{if(e.key==="ArrowLeft"&&state.moves.length)$("undo").click();
   if(e.key==="f")$("flip").click();};
 
+$("lang").onclick=()=>{LG=LG==="vi"?"en":"vi";
+  try{localStorage.setItem("qilin_lang",LG)}catch(e){}
+  applyLang();};
+
 buildBoard();
+applyLang();
 fetch("/api/engines").then(r=>r.json()).then(list=>{
   list.forEach(n=>{const o=document.createElement("option");o.value=n;o.textContent=n;
     $("engine").appendChild(o);});

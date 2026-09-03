@@ -39,26 +39,55 @@ def register_engine(name, nnue_path, depth):
     print("  {:<8} hiệu chỉnh: thế xuất phát {:+d}cp -> 505 điểm".format(name, cp0))
 
 
+def draw_en(vi):
+    """Dịch lý do hoà sang tiếng Anh (Game.draw_reason trả về tiếng Việt)."""
+    if "50 nước" in vi:
+        return "fifty-move rule"
+    if "lặp lại" in vi:
+        return "threefold repetition"
+    if "đủ lực" in vi:
+        return "insufficient material"
+    if "PAT" in vi or "hết nước" in vi:
+        return "stalemate"
+    return vi
+
+
+def outcome_en(res, vi):
+    if res == "1/2-1/2":
+        return "draw - " + draw_en(vi)
+    if res in ("1-0", "0-1"):
+        return "{} wins by checkmate".format("White" if res == "1-0" else "Black")
+    return "game in progress"
+
+
 def build_game(start_fen, moves):
+    """Trả về (Game, các nước đã áp dụng, các nước bị từ chối).
+
+    Nước bất hợp lệ KHÔNG được nuốt im lặng: nếu chỉ `break` thì ván bị cắt
+    cụt và giao diện thấy bàn cờ lùi về thế cũ mà không hiểu tại sao. Trả
+    danh sách bị từ chối lên để phía giao diện báo cho người dùng.
+    """
     g = Game(start_fen or START_FEN)
-    applied = []
+    applied, rejected = [], []
     for s in moves:
         m = parse_uci(g.pos, s)
         if m is None:
+            rejected.append(s)
             break
         g.push(m)
         applied.append(s)
-    return g, applied
+    return g, applied, rejected
 
 
 def analyse(start_fen, moves, depth, engine, on_depth=None):
     stm_fn, white_fn, cp0 = ENGINES[engine]
-    g, applied = build_game(start_fen, moves)
+    g, applied, rejected = build_game(start_fen, moves)
     pos = g.pos
     out = {
         "fen": pos.fen(),
         "side": "w" if pos.side == 0 else "b",
         "moves": applied,
+        "rejected": rejected,
         "legal": sorted(move_str(m) for m in pos.legal_moves()),
         "in_check": pos.in_check(),
         "halfmove": pos.halfmove,
@@ -71,6 +100,7 @@ def analyse(start_fen, moves, depth, engine, on_depth=None):
     res, desc = g.outcome()
     out["outcome"] = res
     out["outcome_text"] = desc
+    out["outcome_text_en"] = outcome_en(res, desc)
 
     scoring.calibrate(cp0)
 
@@ -78,12 +108,15 @@ def analyse(start_fen, moves, depth, engine, on_depth=None):
     draw = g.draw_reason()
     if draw:
         out.update(score=500, cp=None, best=None, pv=[],
-                   note="HOÀ CỜ: " + draw, depth=0, nodes=0, elapsed=0.0)
+                   note="HOÀ CỜ: " + draw, note_en="DRAW: " + draw_en(draw),
+                   depth=0, nodes=0, elapsed=0.0)
         return out
     if not out["legal"]:
         loser = "Trắng" if pos.side == 0 else "Đen"
         out.update(score=0 if pos.side == 0 else 1000, cp=None, best=None, pv=[],
-                   note="{} đã bị chiếu hết".format(loser), depth=0, nodes=0, elapsed=0.0)
+                   note="{} đã bị chiếu hết".format(loser),
+                   note_en="{} has been checkmated".format("White" if pos.side == 0 else "Black"),
+                   depth=0, nodes=0, elapsed=0.0)
         return out
 
     mate1 = find_mate_in_one(pos)
@@ -92,6 +125,8 @@ def analyse(start_fen, moves, depth, engine, on_depth=None):
         out.update(score=1000 if pos.side == 0 else 0, cp=None,
                    best=move_str(mate1), pv=[move_str(mate1)],
                    note="{} CHIẾU HẾT ngay nước này".format(who),
+                   note_en="{} MATES on this move".format(
+                       "White" if pos.side == 0 else "Black"),
                    depth=1, nodes=0, elapsed=0.0)
         return out
 
@@ -134,6 +169,7 @@ def analyse(start_fen, moves, depth, engine, on_depth=None):
         static=white_fn(pos),
     )
     out["explain"] = scoring.explain(out["score"], out["cp"])
+    out["explain_en"] = scoring.explain(out["score"], out["cp"], lang="en")
 
     # Điểm SAU KHI đi nước tốt nhất - cho thấy nước đó dẫn tới đâu
     if r["move"]:
